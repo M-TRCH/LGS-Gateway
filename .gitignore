@@ -1,33 +1,9 @@
-# Virtual Environment
+# Environments
 venv/
-.venv/
-env/
-
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.egg-info/
-dist/
-build/
 
 # Logs
 *.log
-logs/
 
-# OS files
-.DS_Store
-Thumbs.db
-
-# IDE / Editor
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# Environment variables
-.env
-
-# Byte-compiled / optimized
+# Python Cache
+__pycache__/
 *.pyc
-*.pyo

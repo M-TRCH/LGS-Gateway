@@ -33,7 +33,7 @@ TCP_HOST = "0.0.0.0"
 TCP_PORT = 502  # Use 502 if running as root/admin
 
 SERIAL_CONFIG = {
-    "port": "COM23",  # Change to your port (e.g., /dev/ttyUSB0)
+    "port": "/dev/ttyUSB0",  # Change to your port (e.g., /dev/ttyUSB0)
     "baudrate": 9600,
     "bytesize": 8,
     "parity": "N",

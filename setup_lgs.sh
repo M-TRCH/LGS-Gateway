@@ -1,54 +1,31 @@
 #!/bin/bash
-# ===========================================
-# LGS-Gateway Auto Setup Script
-# ===========================================
+# LGS Gateway - Automated Deployment Script
 
-set -e
+echo "========================================"
+echo "  Starting LGS Gateway Setup...  "
+echo "========================================"
 
-PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SERVICE_FILE="$PROJECT_DIR/systemd/lgs_gateway.service"
-VENV_DIR="$PROJECT_DIR/venv"
+# 1. Update OS & Install Dependencies
+echo "[1/4] Updating OS and installing required packages..."
+sudo apt update
+sudo apt install python3 python3-pip python3-venv -y
 
-echo "========================================="
-echo " LGS-Gateway Installer"
-echo "========================================="
+# 2. Setup Python Virtual Environment
+echo "[2/4] Setting up Python Virtual Environment..."
+python3 -m venv venv
+source venv/bin/activate
+echo "Installing Python libraries..."
+pip install -r requirements.txt
 
-# ตรวจสอบสิทธิ์ root
-if [ "$EUID" -ne 0 ]; then
-  echo "[ERROR] กรุณารันด้วย sudo: sudo ./setup_lgs.sh"
-  exit 1
-fi
+# 3. Setup Systemd Service
+echo "[3/4] Installing Systemd Service..."
+sudo cp systemd/lgs_gateway.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable lgs_gateway.service
+sudo systemctl restart lgs_gateway.service
 
-# 1) อัปเดตระบบ
-echo "[1/5] อัปเดตระบบ..."
-apt-get update -y
-
-# 2) ติดตั้ง Python3 และ pip
-echo "[2/5] ติดตั้ง Python3, pip, venv..."
-apt-get install -y python3 python3-pip python3-venv
-
-# 3) สร้าง Virtual Environment และติดตั้ง Library
-echo "[3/5] สร้าง Virtual Environment..."
-python3 -m venv "$VENV_DIR"
-source "$VENV_DIR/bin/activate"
-pip install --upgrade pip
-pip install -r "$PROJECT_DIR/requirements.txt"
-deactivate
-
-# 4) ติดตั้ง Systemd Service
-echo "[4/5] ติดตั้ง Systemd Service..."
-cp "$SERVICE_FILE" /etc/systemd/system/lgs_gateway.service
-systemctl daemon-reload
-systemctl enable lgs_gateway.service
-
-# 5) เริ่มต้น Service
-echo "[5/5] เริ่มต้น Service..."
-systemctl start lgs_gateway.service
-
-echo ""
-echo "========================================="
-echo " ติดตั้งเสร็จสมบูรณ์!"
-echo "========================================="
-echo " ตรวจสอบสถานะ: sudo systemctl status lgs_gateway"
-echo " ดู Log:       sudo journalctl -u lgs_gateway -f"
-echo "========================================="
+echo "[4/4] Deployment Complete! ✅"
+echo "========================================"
+echo "  Check status: sudo systemctl status lgs_gateway.service"
+echo "  View logs:    sudo journalctl -u lgs_gateway.service -f"
+echo "========================================"
