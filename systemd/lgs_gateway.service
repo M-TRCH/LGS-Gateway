@@ -1,0 +1,14 @@
+[Unit]
+Description=LGS Modbus RTU to TCP Gateway
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/pi/LGS-Gateway
+ExecStart=/home/pi/LGS-Gateway/venv/bin/python /home/pi/LGS-Gateway/src/modbus_gateway.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
