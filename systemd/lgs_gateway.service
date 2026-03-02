@@ -1,14 +1,38 @@
 [Unit]
-Description=LGS Modbus TCP to RTU Gateway
+Description=LGS Modbus TCP-to-RTU Gateway v2.0
 After=network.target
+Wants=network-online.target
 
 [Service]
-User=root
+Type=simple
+User=lgs-gateway
+Group=dialout
 WorkingDirectory=/home/arduino/lgs_gateway
-ExecStart=/home/arduino/lgs_gateway/venv/bin/python /home/arduino/lgs_gateway/src/modbus_gateway.py
+ExecStart=/home/arduino/lgs_gateway/venv/bin/python /home/arduino/lgs_gateway/src/modbus_gateway.py /etc/lgs_gateway/config.yaml
 Restart=always
 RestartSec=5
+
+# Environment
 Environment=PYTHONUNBUFFERED=1
+
+# Allow binding to port 502 without root
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/arduino/lgs_gateway
+PrivateTmp=true
+
+# Resource limits
+LimitNOFILE=1024
+MemoryMax=256M
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=lgs-gateway
 
 [Install]
 WantedBy=multi-user.target

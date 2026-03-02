@@ -1,0 +1,61 @@
+# =============================================================
+# LGS Gateway Configuration
+# =============================================================
+# Override any setting with environment variables (prefix: LGS_)
+# Example: LGS_TCP_PORT=1502 LGS_SERIAL_PORT=/dev/ttyUSB1
+# =============================================================
+
+gateway:
+  tcp_host: "0.0.0.0"
+  tcp_port: 502
+  # Timeout waiting for RTU response (seconds)
+  server_timeout: 5.0
+
+serial:
+  port: "/dev/ttyUSB0"
+  baudrate: 9600
+  bytesize: 8
+  parity: "N"
+  stopbits: 1
+  # RTU response timeout (seconds)
+  timeout: 0.5
+  # Number of connection attempts before backoff
+  connect_retries: 3
+  # Exponential backoff range (seconds)
+  reconnect_delay_min: 0.5
+  reconnect_delay_max: 30.0
+  # Thread pool size for blocking serial I/O (keep small)
+  executor_workers: 2
+
+queue:
+  # Maximum pending requests (0 = unlimited — NOT recommended)
+  maxsize: 100
+
+deduplication:
+  # Write deduplication is OFF by default for industrial safety.
+  # Enable only if you understand the implications (see CODE_REVIEW.md §6.1).
+  enabled: false
+  # Time window for deduplication (seconds)
+  cache_ttl: 0.5
+  # How long to keep write history entries (seconds)
+  history_ttl: 5.0
+
+logging:
+  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  level: "INFO"
+  # "text" for human-readable, "json" for structured logging
+  format: "text"
+
+health:
+  # HTTP health-check endpoint
+  enabled: true
+  host: "0.0.0.0"
+  port: 8080
+
+watchdog:
+  # Periodic internal health monitoring
+  enabled: true
+  # Check interval (seconds)
+  interval: 10.0
+  # Warn when queue depth exceeds this threshold
+  queue_warn_threshold: 50
