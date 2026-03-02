@@ -1,29 +1,44 @@
-# LGS Smart Gateway — Code Review & Improvement Plan
+# LGS Smart Gateway v2.0 — Code Review & Vulnerability Assessment
 
-> **ไฟล์เป้าหมาย:** `src/modbus_gateway.py`  
-> **เวอร์ชัน:** pymodbus 3.12.1 / pyserial 3.5  
-> **วันที่ประเมิน:** 2 มีนาคม 2026  
+> **ไฟล์เป้าหมาย:** `src/modbus_gateway.py` (v2.0 — Industrial-Grade)  
+> **เวอร์ชัน Runtime:** pymodbus 3.12.1 / pyserial 3.5 / pyyaml ≥6.0  
+> **วันที่ประเมิน:** 2 มีนาคม 2026 (อัปเดตจากการทดสอบจริง)  
+> **สถานะการทดสอบ:** ✅ ผ่านการทดสอบฟังก์ชันหลักทั้งหมด  
 > **บริบท:** Gateway ระดับอุตสาหกรรม (Industrial-Grade Modbus TCP→RTU)
+
+---
+
+## ผลการทดสอบฟังก์ชัน (Verified Working)
+
+| ฟังก์ชัน | FC | สถานะ |
+|---|---|---|
+| Write Single Coil | FC 5 | ✅ Pass |
+| Write Multiple Coils | FC 15 | ✅ Pass |
+| Read Coils | FC 1 | ✅ Pass |
+| Read Holding Registers | FC 3 | ✅ Pass |
+| Write Single Register | FC 6 | ✅ Pass |
+| Write Multiple Registers | FC 16 | ✅ Pass |
+| Broadcast (Unit ID = 0) ทุกคำสั่ง | All | ✅ Pass |
 
 ---
 
 ## สารบัญ
 
-1. [สรุปภาพรวมสถาปัตยกรรม](#1-สรุปภาพรวมสถาปัตยกรรม)
-2. [วิเคราะห์คอมโพเนนต์หลัก](#2-วิเคราะห์คอมโพเนนต์หลัก)
-3. [ช่องโหว่ด้านความปลอดภัย (Security Vulnerabilities)](#3-ช่องโหว่ด้านความปลอดภัย)
-4. [ช่องโหว่ด้านความเสถียร (Reliability Vulnerabilities)](#4-ช่องโหว่ด้านความเสถียร)
-5. [ช่องโหว่ด้าน Concurrency & Race Conditions](#5-ช่องโหว่ด้าน-concurrency--race-conditions)
-6. [ปัญหาเชิงโปรโตคอล Modbus](#6-ปัญหาเชิงโปรโตคอล-modbus)
-7. [ปัญหาด้านคุณภาพโค้ด (Code Quality)](#7-ปัญหาด้านคุณภาพโค้ด)
-8. [ปัญหาด้านประสิทธิภาพ (Performance)](#8-ปัญหาด้านประสิทธิภาพ)
+1. [สรุปภาพรวมสถาปัตยกรรม v2.0](#1-สรุปภาพรวมสถาปัตยกรรม-v20)
+2. [การเปลี่ยนแปลงจาก v1.0 → v2.0 (แก้ไขแล้ว)](#2-การเปลี่ยนแปลงจาก-v10--v20-แก้ไขแล้ว)
+3. [ช่องโหว่ที่ยังคงมีอยู่ — ด้านความปลอดภัย (Security)](#3-ช่องโหว่ที่ยังคงมีอยู่--ด้านความปลอดภัย-security)
+4. [ช่องโหว่ที่ยังคงมีอยู่ — ด้านความเสถียร (Reliability)](#4-ช่องโหว่ที่ยังคงมีอยู่--ด้านความเสถียร-reliability)
+5. [ช่องโหว่ที่ยังคงมีอยู่ — ด้าน Concurrency & Race Conditions](#5-ช่องโหว่ที่ยังคงมีอยู่--ด้าน-concurrency--race-conditions)
+6. [ช่องโหว่ที่ยังคงมีอยู่ — ด้านโปรโตคอล Modbus](#6-ช่องโหว่ที่ยังคงมีอยู่--ด้านโปรโตคอล-modbus)
+7. [ปัญหาด้านคุณภาพโค้ด (Code Quality)](#7-ปัญหาด้านคุณภาพโค้ด-code-quality)
+8. [ปัญหาด้านประสิทธิภาพ (Performance)](#8-ปัญหาด้านประสิทธิภาพ-performance)
 9. [ปัญหาด้าน Deployment & Operations](#9-ปัญหาด้าน-deployment--operations)
-10. [แผนการปรับปรุง (Improvement Roadmap)](#10-แผนการปรับปรุง)
+10. [แผนการปรับปรุง (Improvement Roadmap)](#10-แผนการปรับปรุง-improvement-roadmap)
 11. [สรุปตารางความเสี่ยง](#11-สรุปตารางความเสี่ยง)
 
 ---
 
-## 1. สรุปภาพรวมสถาปัตยกรรม
+## 1. สรุปภาพรวมสถาปัตยกรรม v2.0
 
 ### 1.1 หน้าที่ของระบบ
 
@@ -32,111 +47,96 @@
 ### 1.2 Data Flow
 
 ```
-┌──────────────┐     TCP/502      ┌─────────────────────┐    asyncio.Queue    ┌────────────────┐    RS485/Serial    ┌──────────────┐
-│  SCADA / HMI │ ──────────────►  │  pymodbus Async TCP │ ──────────────────► │ Serial Worker  │ ────────────────► │  RTU Devices  │
+┌──────────────┐     TCP/502      ┌─────────────────────┐    asyncio.Queue     ┌────────────────┐    RS485/Serial    ┌──────────────┐
+│  SCADA / HMI │ ──────────────►  │  pymodbus Async TCP │ ───(bounded=100)───► │ Serial Worker  │ ────────────────► │  RTU Devices  │
 │  (Clients)   │ ◄──────────────  │  Server (Main Loop) │ ◄────────────────── │ (Separate Loop)│ ◄──────────────── │  (Slaves)     │
 └──────────────┘                  └─────────────────────┘                     └────────────────┘                    └──────────────┘
-                                    Thread: Main                                Thread: serial_runner
-                                    Loop: asyncio.run()                         Loop: serial_manager_loop
+                                    │                                           │
+                                    ├─ :8080 /health (HTTP)                     ├─ Exponential Backoff Reconnect
+                                    ├─ Watchdog Task                            ├─ Categorised Exception Handling
+                                    └─ Signal Handler (SIGTERM/SIGINT)          └─ Adaptive Inter-frame Delay
 ```
 
-### 1.3 คอมโพเนนต์หลัก
+### 1.3 คอมโพเนนต์หลัก (v2.0)
 
 | คอมโพเนนต์ | คลาส/ฟังก์ชัน | หน้าที่ |
 |---|---|---|
-| Request Model | `RtuRequest` | โครงสร้างข้อมูลคำสั่ง + Timestamp lifecycle |
-| Serial Manager | `SerialManager` | คิวงาน, Write Deduplication, Connect/Reconnect, Worker Loop |
-| Data Block | `GatewayBlock` | Sparse Data Block (ไม่มี logic เพิ่ม — pass-through) |
-| Device Context | `GatewayContext` | ตัวกลางรับคำสั่ง TCP → สร้าง `RtuRequest` → ส่งเข้าคิว |
-| Entry Point | `main()` | สร้าง 248 `GatewayContext` (Unit 0-247), เริ่ม TCP Server |
-| Serial Thread | `serial_runner()` | สร้าง event loop แยก, รัน `_worker_loop` |
+| Configuration | `load_config()` | YAML config + env-var overrides + deep merge |
+| Logging | `setup_logging()` + `_JsonFormatter` | Text หรือ JSON structured logging |
+| Request Model | `RtuRequest` | โครงสร้างข้อมูลคำสั่ง + `__slots__` + sequential ID + Timestamp lifecycle |
+| Serial Manager | `SerialManager` | Bounded queue, write deduplication (opt-in), exponential backoff reconnect, categorised errors |
+| Pass-through Block | `_PassthroughBlock` | Accepts all addresses, delegates I/O to GatewayContext |
+| Device Context | `GatewayContext` | Proxy TCP→Serial + write-back cache + exception-to-Modbus-code mapping |
+| Lazy Devices | `_LazyDevices` | สร้าง GatewayContext เฉพาะ Unit ID ที่มีการ request จริง (memory efficient) |
+| Health Check | `_health_server()` | HTTP `/health` endpoint แสดง status, metrics, uptime |
+| Watchdog | `_watchdog()` | ตรวจสอบ worker alive, queue depth, serial connection, idle timeout |
+| Shutdown | `run_gateway()` | Signal handler (SIGTERM/SIGINT), drain queue, cleanup serial |
+| Custom Exceptions | `SerialConnectionError`, `DeviceNoResponseError`, `DeviceError`, `QueueFullError` | แยกประเภท error สำหรับ Modbus exception codes ที่แม่นยำ |
+| Entry Point | `main()` | ไม่มี module-level side effects — safe to import |
 
-### 1.4 รูปแบบ Threading
+### 1.4 รูปแบบ Threading (v2.0)
 
 ```
-Main Thread                          Serial Thread (daemon=True)
-    │                                      │
-    ├─ asyncio.run(main())                 ├─ serial_manager_loop.run_forever()
-    │   ├─ StartAsyncTcpServer()           │   └─ _worker_loop() [coroutine]
-    │   │   ├─ GatewayContext.getValues()  │       ├─ queue.get()
-    │   │   ├─ GatewayContext.setValues()  │       ├─ run_in_executor(serial I/O)
-    │   │   ├─ async_getValues()           │       └─ future.set_result()
-    │   │   └─ async_setValues()           │
-    │   │                                  │
-    │   └── [สื่อสารผ่าน]                   │
-    │       run_coroutine_threadsafe() ────►│
-    │       future.result(timeout) ◄───────│
-    │                                      │
+Main Thread                               Serial Thread (daemon=True, name="serial-worker")
+    │                                           │
+    ├─ asyncio.run(run_gateway())               ├─ serial_loop.run_forever()
+    │   ├─ StartAsyncTcpServer()                │   └─ SerialManager.worker() [coroutine]
+    │   │   ├─ GatewayContext.async_getValues()  │       ├─ queue.get() [with timeout for shutdown poll]
+    │   │   ├─ GatewayContext.async_setValues()  │       ├─ _exec() → _do_io() → run_in_executor(serial I/O)
+    │   │   ├─ (sync fallback: getValues/setValues) │   ├─ Categorised exception handling
+    │   │   └── ────────────────────────────────┐│   └─ future.set_result() / set_exception()
+    │   ├─ _health_server() [:8080]             ││
+    │   ├─ _watchdog()                          ││
+    │   └─ shutdown_ev.wait()                   ││
+    │                                           ││
+    │   [สื่อสารผ่าน]                            ││
+    │   run_coroutine_threadsafe() ────────────►│┘
+    │   wrap_future + wait_for(timeout) ◄───────│
+    │                                           │
+    ├─ [Graceful Shutdown]                      │
+    │   serial_mgr.shutdown() → drain queue     │
+    │   serial_loop.stop()                      │
+    │   thr.join(timeout=5)                     │
 ```
 
 ---
 
-## 2. วิเคราะห์คอมโพเนนต์หลัก
+## 2. การเปลี่ยนแปลงจาก v1.0 → v2.0 (แก้ไขแล้ว)
 
-### 2.1 `RtuRequest`
+สรุปปัญหาจาก v1.0 ที่ได้รับการแก้ไขใน v2.0:
 
-**จุดดี:**
-- มี Timestamp lifecycle ครบถ้วน (`queue_ts`, `dequeued_ts`, `forward_ts`, `resp_ts`, `complete_ts`) เหมาะสำหรับ profiling
-
-**จุดด้อย:**
-- `complete_ts` ถูกประกาศแต่ไม่เคยถูกเขียนค่าในทุก code path
-- ไม่มี `__repr__` หรือ `__str__` สำหรับ debugging
-- ไม่มี request ID สำหรับ tracing ข้าม component
-
-### 2.2 `SerialManager`
-
-**จุดดี:**
-- การ serialize คำสั่งผ่าน `asyncio.Queue` ป้องกัน RS485 bus collision
-- Write Deduplication ลด traffic บน serial bus
-- Auto-reconnect mechanism
-
-**จุดด้อยวิกฤต:**
-- `ThreadPoolExecutor(max_workers=8)` — มี 8 threads แต่ serial port เป็น half-duplex ใช้ได้ทีละ thread เท่านั้น โดยทางทฤษฎีแล้ว worker loop ส่งงานทีละงาน แต่ executor ขนาด 8 เปลืองทรัพยากรโดยไม่จำเป็น และหาก logic เปลี่ยนอาจเกิด collision
-- `_read_cache` ถูกประกาศแต่ **ไม่เคยถูกใช้** — dead code
-- `_write_history` เป็น `dict` ธรรมดา ถูกเข้าถึงจากทั้ง TCP thread (ผ่าน `submit_request` ที่ถูกเรียกผ่าน `run_coroutine_threadsafe`) — ปลอดภัยเพราะรันบน serial loop เดียว แต่ไม่มีการป้องกันอย่างชัดเจน ถ้าสถาปัตยกรรมเปลี่ยนจะเกิด race condition ทันที
-- `start()` method ไม่เคยถูกเรียก — dead code
-- ไม่มี queue size limit → Unbounded memory growth ถ้า serial ช้า
-
-### 2.3 `GatewayBlock`
-
-- เป็นคลาสว่าง (`pass`) สืบทอดจาก `ModbusSparseDataBlock`
-- ไม่ได้เพิ่ม logic ใดๆ — อาจใช้ `ModbusSparseDataBlock` ตรงๆ ได้เลย
-
-### 2.4 `GatewayContext`
-
-**จุดดี:**
-- มีทั้ง sync (`getValues`/`setValues`) และ async (`async_getValues`/`async_setValues`) เพื่อรองรับ pymodbus ทุกโหมด
-- Broadcast (Unit 0) มี fire-and-forget สำหรับ write
-
-**จุดด้อยวิกฤต:**
-- **Sync `getValues()` เรียก `future.result(timeout=2.0)` ซึ่ง block thread** — หาก pymodbus เรียกจาก event loop โดยตรง จะ **block ทั้ง event loop** ทำให้ TCP server หยุดรับ request อื่นๆ ทั้งหมดระหว่างรอ
-- `getValues` ถูกเรียกหลัง write (read-after-write ของ pymodbus) — FC 5/15 ถูก map เป็น FC 1 ซึ่ง **ส่ง serial read ซ้ำโดยไม่จำเป็น** ทุกครั้งที่มี write
-- FC 6/16 ไม่ได้ถูก map → อาจส่ง write ซ้ำผ่าน getValues path
-- สร้าง 248 instances ตั้งแต่เริ่ม (Unit 0-247) → ใช้ memory โดยไม่จำเป็นสำหรับ unit ที่ไม่มีอุปกรณ์
-
-### 2.5 Module-Level Side Effects
-
-```python
-serial_manager = SerialManager()           # L370: สร้าง instance ตอน import
-serial_manager_loop = asyncio.new_event_loop()  # L568: สร้าง loop ตอน import
-t = Thread(target=serial_runner, daemon=True)   # L578: สร้าง + start thread ตอน import
-t.start()
-```
-
-**ปัญหา:**
-- การ import module เพียงอย่างเดียว (**ไม่ต้องรัน**) จะ start thread ทันที → ทำให้เขียน unit test ได้ยากมาก
-- ไม่สามารถ reload module ได้โดยไม่เกิดปัญหา thread ซ้ำ
-- daemon thread จะถูก kill ทันทีเมื่อ main thread จบ โดยไม่มี graceful shutdown
+| # | ปัญหา v1.0 | ระดับเดิม | สถานะ v2.0 | วิธีแก้ |
+|---|---|---|---|---|
+| 1 | ไม่มี Graceful Shutdown | 🔴 Critical | ✅ แก้ไขแล้ว | Signal handler (SIGTERM/SIGINT), drain queue, close serial, stop loop, join thread |
+| 2 | ไม่มี Watchdog / Health Check | 🔴 Critical | ✅ แก้ไขแล้ว | `_watchdog()` task + HTTP `/health` endpoint (:8080) |
+| 3 | Exception ทำ disconnect ทั้ง bus | 🟠 High | ✅ แก้ไขแล้ว | Categorised: `ConnectionError`→reconnect, `ModbusIOException`→device error, `DeviceError`→propagate, อื่นๆ→log |
+| 4 | Queue ไม่มีขนาดจำกัด | 🟠 High | ✅ แก้ไขแล้ว | `asyncio.Queue(maxsize=100)` + `QueueFullError` → `SLAVE_BUSY` |
+| 5 | Serial reconnect ไม่มี backoff | 🟠 High | ✅ แก้ไขแล้ว | Exponential backoff (0.5s → 30s) + check `/dev/ttyUSB*` exists |
+| 6 | Read-After-Write ส่ง serial read ซ้ำ | 🟠 High | ✅ แก้ไขแล้ว | Write-back cache (`_wcache`) + `_map_write_to_read()` ครบทุก FC |
+| 7 | รัน root เพื่อ bind port 502 | 🟠 High | ✅ แก้ไขแล้ว | `AmbientCapabilities=CAP_NET_BIND_SERVICE` + dedicated user `lgs-gateway` |
+| 8 | Modbus exception codes ไม่แม่นยำ | 🟡 Medium | ✅ แก้ไขแล้ว | `_exc_to_code()`: QueueFull→`SLAVE_BUSY`, ConnectionError→`GATEWAY_PATH_UNAVAIL`, NoResponse→`GATEWAY_NO_RESPONSE`, DeviceError→propagate code |
+| 9 | Config เป็น hardcoded | 🟡 Medium | ✅ แก้ไขแล้ว | YAML config + 15 env-var overrides + auto-discovery path |
+| 10 | `ThreadPoolExecutor(max_workers=8)` | 🟡 Medium | ✅ แก้ไขแล้ว | `max_workers=2` (configurable) |
+| 11 | สร้าง 248 Context ตั้งแต่เริ่ม | 🟡 Medium | ✅ แก้ไขแล้ว | `_LazyDevices` dict — สร้างเมื่อ access ครั้งแรก |
+| 12 | `asyncio.sleep(0.01)` hardcoded | 🟡 Medium | ✅ แก้ไขแล้ว | Adaptive `_inter_frame_delay()` ตาม baudrate (Modbus spec compliant) |
+| 13 | Log DEBUG ใน Production | 🟡 Medium | ✅ แก้ไขแล้ว | Configurable level (default INFO) + JSON format option |
+| 14 | Dead Code ใน SerialManager | 🟢 Low | ✅ แก้ไขแล้ว | ลบ `_read_cache`, `complete_ts`, `start()`, `GatewayBlock` |
+| 15 | Module-level side effects | 🟢 Low | ✅ แก้ไขแล้ว | Thread/loop สร้างใน `run_gateway()` — safe to import |
+| 16 | Write Deduplication เป็น false ACK | 🔴 Critical | ✅ แก้ไขแล้ว | Default OFF (`enabled: false`) — opt-in only |
+| 17 | Coil normalization ซ้ำซ้อน | 🟢 Low | ✅ แก้ไขแล้ว | `_norm_coils()` / `_norm_regs()` helper functions |
+| 18 | Setup Script ไม่สมบูรณ์ | 🟡 Medium | ✅ แก้ไขแล้ว | `set -euo pipefail`, dedicated user, serial check, config install |
+| 19 | `_clean_write_history()` ทุก request | 🟢 Low | ✅ แก้ไขแล้ว | Rate-limited to 1x/sec (`_last_hist_clean` throttle) |
 
 ---
 
-## 3. ช่องโหว่ด้านความปลอดภัย
+## 3. ช่องโหว่ที่ยังคงมีอยู่ — ด้านความปลอดภัย (Security)
 
 ### 3.1 [CRITICAL] ไม่มี Authentication / Authorization
 
-```python
-TCP_HOST = "0.0.0.0"
-TCP_PORT = 502
+```yaml
+gateway:
+  tcp_host: "0.0.0.0"   # ← เปิดรับจากทุก interface
+  tcp_port: 502
 ```
 
 - เปิดรับ connection จาก **ทุก network interface** โดยไม่มีการตรวจสอบตัวตน
@@ -148,476 +148,666 @@ TCP_PORT = 502
   - ส่ง broadcast write (Unit 0) กระทบทุกอุปกรณ์บน bus พร้อมกัน
 
 **แนวทางแก้ไข:**
-- Bind เฉพาะ interface ที่จำเป็น (เช่น `127.0.0.1` หรือ VLAN เฉพาะ)
-- เพิ่ม IP whitelist / firewall rules
+- Bind เฉพาะ interface ที่จำเป็น (เช่น `127.0.0.1` หรือ VLAN เฉพาะ) ผ่าน `config.yaml`
+- เพิ่ม IP whitelist / ACL ใน application layer
+- พิจารณา firewall rules (`iptables`/`nftables`) บนบอร์ด
 - พิจารณา Modbus/TCP Security (TLS) ตาม IEC 62351 หรือ VPN tunnel
-- จำกัด Unit ID ที่อนุญาตให้เข้าถึง
+- จำกัด Unit ID ที่อนุญาตให้เข้าถึง per client IP
 
-### 3.2 [HIGH] รันเป็น root
+### 3.2 [HIGH] ไม่มี Rate Limiting / Connection Limiting
 
-```ini
-# lgs_gateway.service
-User=root
-```
-
-- Service รันด้วย root privileges เพื่อ bind port 502
-- หากมีช่องโหว่ใน pymodbus หรือ Python runtime ผู้โจมตีได้สิทธิ์ root ทั้งระบบ
+- ไม่จำกัดจำนวน concurrent TCP connections ที่ pymodbus async server รับ
+- ไม่จำกัด request rate ต่อ connection
+- Queue maxsize=100 ป้องกัน memory explosion แต่ **ไม่ป้องกัน** TCP connection flooding
+- ผู้โจมตีสามารถ DoS ได้โดย:
+  - เปิด TCP connections จำนวนมาก → file descriptor exhaustion (`LimitNOFILE=1024`)
+  - ส่ง request เร็วจน queue เต็มตลอด → ทุก legitimate client ได้ `SLAVE_BUSY`
 
 **แนวทางแก้ไข:**
-- ใช้ `setcap 'cap_net_bind_service=+ep'` เพื่อ bind port < 1024 โดยไม่ต้องเป็น root
-- หรือใช้ `authbind`
-- หรือ bind port สูง (1502) แล้วใช้ iptables redirect:
-  ```bash
-  iptables -t nat -A PREROUTING -p tcp --dport 502 -j REDIRECT --to-port 1502
-  ```
-- สร้าง dedicated user (เช่น `lgs-gateway`) ที่มีสิทธิ์เฉพาะ serial port
+- เพิ่ม max connections limit ใน TCP server configuration
+- เพิ่ม per-IP rate limiter (token bucket / sliding window)
+- ใช้ `iptables -m connlimit` หรือ `nftables` จำกัดจาก network layer
 
-### 3.3 [HIGH] ไม่มี Rate Limiting / Connection Limiting
+### 3.3 [HIGH] Health Endpoint ไม่มี Authentication
 
-- ไม่จำกัดจำนวน concurrent TCP connections
-- ไม่จำกัด request rate ต่อ connection
-- ผู้โจมตีสามารถ DoS ได้ง่ายผ่านการเปิด connection จำนวนมากหรือส่ง request ถี่มาก
-- Queue ไม่มีขนาดจำกัด → Memory exhaustion attack
+```python
+async def _health_server(serial_mgr, config, start_ts):
+    srv = await asyncio.start_server(_handle, host, port)  # ← :8080 open
+```
+
+- HTTP health endpoint เปิดบนพอร์ต 8080 โดยไม่มี authentication
+- แสดงข้อมูลภายใน: version, serial port, queue depth, error counters, uptime
+- ผู้โจมตีสามารถใช้ข้อมูลนี้เพื่อ:
+  - ระบุเวอร์ชัน software (target known vulnerabilities)
+  - ตรวจสอบว่า serial port disconnect แล้วหรือไม่ (timing attack window)
+  - วิเคราะห์ traffic patterns จาก metrics
+
+**แนวทางแก้ไข:**
+- Bind health endpoint เฉพาะ `127.0.0.1` (default) แทน `0.0.0.0`
+- เพิ่ม basic authentication หรือ API key
+- จำกัด response fields ที่แสดงจากภายนอก
 
 ### 3.4 [MEDIUM] ไม่มีการเข้ารหัสข้อมูล (Encryption)
 
 - Modbus TCP ส่งข้อมูลเป็น plaintext — สามารถ sniff ได้จาก network
-- ไม่มี TLS wrapper
+- Health endpoint HTTP ไม่มี TLS
 - ข้อมูลกระบวนการผลิตที่เป็นความลับอาจถูกดักจับได้
+
+**แนวทางแก้ไข:**
+- TLS wrapper (stunnel, nginx reverse proxy)
+- Modbus/TCP Security extension (pymodbus มี TLS support)
+- VPN tunnel ระหว่าง SCADA/HMI กับ Gateway
 
 ### 3.5 [MEDIUM] ไม่มีการตรวจสอบขอบเขต Input
 
-- `address`, `count`, `value` จาก TCP client ถูกส่งต่อไปยัง serial โดยตรง โดยไม่ validate range
-- ค่า `count` ที่สูงเกินไปอาจทำให้ serial timeout หรือ buffer overflow ในอุปกรณ์ปลายทาง
-- ไม่มีการ sanitize ค่า register ก่อนเขียน
+- `address`, `count`, `value` จาก TCP client ถูกส่งต่อไปยัง serial โดยตรง ไม่ validate range
+- ตาม Modbus spec:
+  - Coils: `count` ∈ [1, 2000], `address` ∈ [0, 65535]
+  - Registers: `count` ∈ [1, 125], `address` ∈ [0, 65535]
+  - Register value ∈ [0, 65535]
+- ค่า `count` ที่สูงเกินไปอาจทำให้ serial timeout หรือ unexpected behavior ในอุปกรณ์ปลายทาง
+- `_PassthroughBlock.validate()` ตรวจแค่ `count > 0` — ไม่มี upper bound
 
-### 3.6 [LOW] Logging อาจรั่วไหลข้อมูลสำคัญ
+**ตำแหน่งในโค้ด (บรรทัด ~720):**
+```python
+class _PassthroughBlock(ModbusSparseDataBlock):
+    def validate(self, address, count=1):
+        return count > 0   # ← ไม่ตรวจ upper bound
+```
 
-- Log ระดับ DEBUG แสดงค่า register/coil ทั้งหมด → หาก log ถูกจัดเก็บไม่ปลอดภัย อาจรั่วไหล process data
-- ไม่มี log rotation → log อาจเต็ม disk
+**แนวทางแก้ไข:**
+- เพิ่ม validation ใน `_PassthroughBlock.validate()` ตาม Modbus Application Protocol spec
+- Validate ค่า register (0-65535) ใน `setValues` ก่อนส่ง serial
+
+### 3.6 [MEDIUM] YAML Config อาจถูกแก้ไข
+
+```python
+file_cfg = yaml.safe_load(fh) or {}
+```
+
+- ใช้ `yaml.safe_load()` (ดี — ป้องกัน arbitrary code execution)
+- แต่ถ้า config file ถูกแก้ไขโดยผู้ไม่หวังดี สามารถ:
+  - เปลี่ยน `tcp_host` เป็น `0.0.0.0` เปิดรับทุก interface
+  - เปลี่ยน `serial.port` ไปยัง device อื่น
+  - เปิด deduplication ทำให้ write ไม่ถูกส่งจริง
+  - ตั้ง `queue.maxsize: 0` ลบ queue limit
+- File permission ตั้งเป็น `640` (ดี) แต่ owned by `lgs-gateway` — ถ้า service ถูก compromise จะแก้ config ได้
+
+**แนวทางแก้ไข:**
+- Config file ควร owned by `root` แต่ readable by `lgs-gateway` (`root:lgs-gateway 640`)
+- Validate ค่า config หลัง load (range check, type check)
+- เพิ่ม config integrity check (hash verification)
+
+### 3.7 [LOW] Logging อาจรั่วไหลข้อมูลสำคัญ
+
+- Log ระดับ DEBUG แสดงค่า register/coil พร้อม request details
+- หาก log ถูกจัดเก็บไม่ปลอดภัย อาจรั่วไหล process data
+- systemd journal มี access control แต่ `journalctl` ต้องสิทธิ์ root/journal group
 
 ---
 
-## 4. ช่องโหว่ด้านความเสถียร (Reliability Vulnerabilities)
+## 4. ช่องโหว่ที่ยังคงมีอยู่ — ด้านความเสถียร (Reliability)
 
-### 4.1 [CRITICAL] ไม่มี Graceful Shutdown
+### 4.1 [HIGH] Watchdog ตรวจจับแต่ไม่สามารถ Self-Heal
 
 ```python
-if __name__ == "__main__":
+async def _watchdog(serial_mgr, config):
+    if not m["worker_alive"]:
+        log.critical("WATCHDOG: Serial worker is NOT alive!")
+    # ← แค่ log — ไม่มีการ recovery
+```
+
+**ปัญหา:**
+- Watchdog ตรวจพบปัญหาแล้ว **แค่ log** — ไม่มีกลไก recovery
+- หาก worker loop crash:
+  - `worker_alive` = False
+  - ทุก request จะ timeout (queue.put สำเร็จแต่ไม่มีคน dequeue)
+  - Watchdog log critical ทุก 10 วิ แต่ **ไม่ restart worker**
+  - Gateway ยัง "alive" (TCP accepts connections) แต่ **ไม่ทำงานจริง** (zombie state)
+- Systemd `Restart=always` ช่วยเฉพาะกรณี process ตาย แต่ไม่ช่วยกรณี internal failure
+
+**แนวทางแก้ไข:**
+- เพิ่ม worker restart logic ใน watchdog:
+  ```python
+  if not m["worker_alive"]:
+      log.critical("Worker dead — restarting...")
+      serial_loop.create_task(serial_mgr.worker())
+  ```
+- หรือ watchdog สั่ง `sys.exit(1)` ให้ systemd restart ทั้ง process
+- เพิ่ม systemd `WatchdogSec=` + `sd_notify` integration (sd-notify protocol)
+
+### 4.2 [HIGH] `_wcache` (Write-back Cache) ไม่ Atomic ข้าม Thread
+
+```python
+# GatewayContext._cache_set() — เรียกจาก Main thread (TCP loop)
+def _cache_set(self, fc, addr, vals):
+    self._wcache[(fc, addr)] = (vals, time.time())
+
+# GatewayContext._cache_get() — เรียกจาก Main thread (TCP loop)
+def _cache_get(self, fc, addr, count):
+    entry = self._wcache.pop((fc, addr), None)
+```
+
+**ปัญหา:**
+- `_wcache` เป็น `dict` ถูกเข้าถึงจาก Main thread (TCP event loop) ในทั้ง sync และ async paths
+- เนื่องจาก pymodbus async server เรียก `async_setValues` → `_cache_set` แล้วตามด้วย `async_getValues` → `_cache_get` **บน event loop เดียวกัน** จึง **ปลอดภัยในปัจจุบัน** (single-threaded within main loop)
+- **แต่**: หากมีการเพิ่ม multi-threading หรือ pymodbus เปลี่ยน internal threading model → race condition ทันที
+- ไม่มี comment หรือ assertion ที่บังคับ invariant นี้
+
+**แนวทางแก้ไข:**
+- เพิ่ม `threading.Lock()` สำหรับ `_wcache` access (defensive)
+- หรือ document invariant อย่างชัดเจน: "MUST be accessed from main event loop only"
+- เพิ่ม `assert asyncio.get_running_loop() is ...` ใน debug mode
+
+### 4.3 [MEDIUM] `asyncio.wait_for(reader.read(), timeout=5.0)` ใน Health Server
+
+```python
+async def _handle(reader, writer):
     try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("Stopping...")
+        await asyncio.wait_for(reader.read(4096), timeout=5.0)
+    except (asyncio.TimeoutError, ConnectionResetError):
+        writer.close()
+        return
 ```
 
-- ไม่มีการ cleanup เมื่อปิดโปรแกรม:
-  - Serial connection ไม่ถูกปิดอย่างถูกต้อง → port อาจ lock
-  - Pending requests ในคิวถูกทิ้ง → client ค้าง timeout
-  - ThreadPoolExecutor ไม่ถูก shutdown → อาจค้างบน blocking I/O
-  - daemon thread ถูก kill ทันที
+**ปัญหา:**
+- Health server อ่าน request แบบ raw bytes — ไม่ parse HTTP method/path
+- **ทุก** TCP connection ไปยังพอร์ต 8080 จะได้ health response (ไม่ว่าจะ request อะไร)
+- Slow-loris attack: ส่ง bytes ทีละตัวภายใน 5 วินาที → ค้าง handler (แต่ `ConnectionResetError` catch ป้องกันบางส่วน)
+- `writer.close()` ใน early return ไม่ `await writer.wait_closed()` → potential resource leak
 
-**ผลกระทบในสภาพแวดล้อมจริง:**
-- `systemctl restart` อาจทำให้ serial port ไม่สามารถเปิดใหม่ได้ทันที
-- SCADA client อาจได้รับ connection reset กะทันหัน
+**แนวทางแก้ไข:**
+- Parse HTTP request line อย่างน้อยเช็ค `GET /health`
+- เพิ่ม `await writer.wait_closed()` หลัง `writer.close()`
+- จำกัด concurrent health connections
 
-### 4.2 [CRITICAL] ไม่มี Watchdog / Health Check
-
-- ไม่มีกลไกตรวจสอบว่า worker loop ยังทำงานอยู่
-- หาก `_worker_loop` crash โดย unhandled exception → คิวจะ grow ไม่สิ้นสุด, ทุก request จะ timeout
-- ไม่มี health endpoint สำหรับ monitoring system ตรวจสอบ
-- `Restart=always` ใน systemd ช่วยเฉพาะกรณี process ตาย แต่ไม่ช่วยกรณี internal deadlock
-
-### 4.3 [HIGH] Serial Connection เปราะบาง
-
-```python
-if not self._connected:
-    connected = False
-    for attempt in range(self.connect_retries):  # connect_retries = 3
-        ...
-        await asyncio.sleep(0.1)
-    if not connected:
-        await asyncio.sleep(self.reconnect_delay)  # reconnect_delay = 0.5
-        continue
-```
-
-- Retry เพียง 3 ครั้งแล้ว sleep แค่ 0.5 วินาที → ไม่มี exponential backoff
-- ถ้า USB serial adapter ถูกถอดออก → loop จะ retry อย่างไม่สิ้นสุดด้วย interval สั้นมาก → CPU spike
-- ไม่มีการตรวจสอบว่า `/dev/ttyUSB0` ยังมีอยู่ก่อน connect
-- ไม่มี alert เมื่อ serial หายไปนาน
-
-### 4.4 [HIGH] Exception ทำให้ทุก Request ตาม Fail
-
-```python
-except Exception as e:
-    worker_log.exception("Worker Exception")
-    self._connected = False  # ← ทุก exception ถือว่า disconnect
-```
-
-- **ทุก** exception ใน worker loop ทำให้ `_connected = False` → trigger reconnect
-- แม้แต่ exception ที่ไม่เกี่ยวกับ connection (เช่น data parsing error, timeout ของ device เดียว) ก็ทำให้ disconnect ทั้ง serial port
-- Device timeout ของ slave ตัวเดียว **ไม่ควร** ทำให้ต้อง reconnect serial port ทั้ง bus
-
-### 4.5 [MEDIUM] `SERVER_TIMEOUT = 2.0` อาจไม่เพียงพอ
-
-- หาก queue มี request หลายตัวรอ + serial device ตอบช้า → 2 วินาทีอาจไม่พอ
-- อุปกรณ์ Modbus RTU บางรุ่น (เช่น power meter, energy analyzer) ใช้เวลาตอบ > 1 วินาที
-- เมื่อ timeout → client ได้รับ error → แต่ request ยังอยู่ในคิวและถูก execute → "ghost write" ที่ client ไม่รู้ผล
-
-### 4.6 [MEDIUM] Broadcast Write ไม่มีการยืนยัน
+### 4.4 [MEDIUM] Broadcast Write Fire-and-Forget ไม่มี Error Tracking
 
 ```python
 if self.unit_id == 0:
-    asyncio.run_coroutine_threadsafe(serial_manager.submit_request(req), serial_manager_loop)
-    return None  # ← fire-and-forget
+    asyncio.run_coroutine_threadsafe(
+        self._mgr.submit(req), self._loop)
+    return SerialManager._echo(req)  # ← immediate return
 ```
 
-- Broadcast write ถูกส่งแบบ fire-and-forget
-- ถ้าคิวเต็มหรือ serial ไม่พร้อม → คำสั่ง broadcast หายไปเงียบๆ
-- ไม่มี retry mechanism สำหรับ broadcast ที่ล้มเหลว
-
----
-
-## 5. ช่องโหว่ด้าน Concurrency & Race Conditions
-
-### 5.1 [HIGH] Cross-Loop Future Resolution
-
-```python
-# TCP thread (main loop):
-fut = asyncio.run_coroutine_threadsafe(serial_manager.submit_request(req), serial_manager_loop)
-res = fut.result(timeout=SERVER_TIMEOUT)  # ← blocking call
-```
-
-- `fut.result()` **block** thread ที่เรียก
-- หาก sync `getValues()` ถูกเรียกจาก main event loop → **deadlock** กับทั้ง TCP server
-- async version (`async_getValues`) ทำงานถูกต้อง แต่ sync version ยังอยู่ใน codebase เป็น **time bomb**
-- ขึ้นกับว่า pymodbus เลือกเรียก sync หรือ async — ถ้า pymodbus version อัปเดตเปลี่ยนพฤติกรรม อาจเกิด deadlock
-
-### 5.2 [HIGH] `_write_history` ไม่มี Thread-Safety Guarantee
-
-- `_write_history` เป็น `dict` ถูกอ่าน/เขียนใน `submit_request()` ซึ่งรันบน serial loop
-- แม้ปัจจุบันจะปลอดภัยเพราะ `submit_request` ถูก schedule บน serial loop ผ่าน `run_coroutine_threadsafe`
-- แต่ **ไม่มีการรับประกันอย่างชัดเจน** — ถ้ามีการเปลี่ยนแปลงสถาปัตยกรรม (เช่น เพิ่ม worker) จะเกิด race condition ทันที
-- ควรใช้ `threading.Lock` หรือ document ไว้อย่างชัดเจน
-
-### 5.3 [MEDIUM] ThreadPoolExecutor ขนาดเกินจำเป็น
-
-```python
-self.executor = ThreadPoolExecutor(max_workers=8)
-```
-
-- Worker loop ส่ง serial I/O ทีละงานผ่าน `run_in_executor`
-- 8 threads เปลืองทรัพยากร; ใช้ `max_workers=1` ก็เพียงพอ (หรือ 2 เผื่อ connect กับ I/O overlap)
-- ยิ่งกว่านั้น ถ้า logic เปลี่ยนให้ส่งงานซ้อนกัน → 8 threads จะเข้าถึง serial port พร้อมกัน → bus collision
-
-### 5.4 [LOW] Module-Level Import Side Effect
-
-```python
-from threading import Thread  # L576: import อยู่กลาง file
-t = Thread(target=serial_runner, daemon=True)
-t.start()  # ← รันทันทีตอน import
-```
-
-- ไม่เป็นไปตามมาตรฐาน Python (imports ควรอยู่ต้นไฟล์)
-- การ import module ใน test จะ start thread → ไม่สามารถทำ unit testing ได้
-
----
-
-## 6. ปัญหาเชิงโปรโตคอล Modbus
-
-### 6.1 [HIGH] Write Deduplication อาจทำให้ข้อมูลหาย
-
-```python
-CACHE_TTL = 0.2  # 200ms
-
-if last_val == val_to_check and (time.time() - last_ts) < CACHE_TTL:
-    dedupe_log.debug("SKIP Redundant Write: ...")
-    return [...]  # ← Fake success โดยไม่ส่งจริง
-```
-
-**ปัญหาในสภาพแวดล้อมอุตสาหกรรม:**
-- SCADA อาจส่ง write ซ้ำด้วยค่าเดิมเพราะ **ต้องการยืนยันว่าเขียนสำเร็จ** (retry after timeout)
-- Deduplication จะ return success ทั้งที่ไม่ได้เขียนจริง → **false acknowledgment**
-- ค่า 200ms เร็วมาก — ถ้า RTU device ใช้เวลา > 200ms ในการ apply ค่า → write ถัดไป (ที่เหมือนกัน) จะถูก skip ทั้งที่อุปกรณ์ยังไม่พร้อม
-- Deduplication ไม่คำนึงถึง **device state** — อุปกรณ์อาจ reset ค่าไปแล้ว แต่ gateway ยัง cache ค่าเก่า
-- **ไม่มีทาง disable** deduplication สำหรับ critical writes
+**ปัญหา:**
+- Broadcast write ถูกส่งแบบ fire-and-forget — **ไม่มีทางรู้ว่าสำเร็จหรือไม่**
+- ถ้า submit ล้มเหลว (QueueFullError) → error หายไปเงียบๆ (Future ถูก ignore)
+- ไม่มี metrics tracking สำหรับ broadcast failures
+- `submit()` จะเพิ่ม `requests_total` + `requests_err` แต่ caller ไม่รู้ผล
 
 **แนวทางแก้ไข:**
-- ทำเป็น opt-in feature (default off สำหรับ industrial use)
-- เก็บ configuration per-unit-id / per-address ว่าจะ deduplicate หรือไม่
-- เพิ่ม TTL ที่ยาวกว่า 200ms หรือให้ configurable ได้
+- ใช้ `asyncio.ensure_future()` + callback เพื่อ log error ถ้า broadcast fail
+- เพิ่ม `requests_broadcast_ok` / `requests_broadcast_err` ใน metrics
+- อย่างน้อยควร `try/except` wrap `run_coroutine_threadsafe` เพื่อ log
 
-### 6.2 [HIGH] Read-After-Write ส่ง Serial Read ซ้ำซ้อน
+### 4.5 [MEDIUM] Daemon Thread อาจสูญเสีย Pending Writes ระหว่าง Shutdown
 
 ```python
-# ใน getValues() — ถูกเรียกโดย pymodbus หลัง write
-read_fc = fc
-if fc in (5, 15):
-    read_fc = 1  # ← map เป็น read coils
+thr = Thread(target=_serial_thread, daemon=True, name="serial-worker")
 ```
 
-- pymodbus เรียก `getValues()` หลัง `setValues()` เพื่อ read-back ค่า
-- โค้ดนี้ map FC 5/15 → FC 1 (read coils) → **ส่งคำสั่ง serial read จริงทุกครั้ง**
-- แต่ **ไม่ได้ map FC 6/16** → ถ้า pymodbus เรียก `getValues(fc=6)` จะ **ส่ง write อีกครั้ง** (เพราะ FC 6 คือ write register)
-- ควร return cached value แทนการ read จาก serial ทุกครั้ง (ลด latency 50% สำหรับ write operations)
+**ปัญหา:**
+- Thread เป็น `daemon=True` — หาก main thread ตายโดยไม่ผ่าน graceful shutdown (เช่น SIGKILL, kernel OOM killer) → daemon thread ถูก kill ทันที
+- Pending serial writes ในคิวจะสูญหาย
+- `serial_mgr.shutdown()` drain queue อย่างถูกต้อง แต่ **เฉพาะ graceful path** (SIGTERM/SIGINT)
 
-### 6.3 [MEDIUM] Modbus Exception Codes ไม่สมบูรณ์
+**แนวทางแก้ไข:**
+- ทำให้ daemon thread เปลี่ยนเป็น non-daemon : `daemon=False` + ensure join ใน shutdown
+- หรือยอมรับว่า SIGKILL = data loss (document เป็น known limitation)
+- เพิ่ม persistent queue (write-ahead log) สำหรับ critical writes
 
-- เมื่อ serial error → return `ExcCodes.GATEWAY_NO_RESPONSE` เสมอ
-- ไม่ distinguish ระหว่าง:
-  - `GATEWAY_PATH_UNAVAILABLE` (serial port ไม่พร้อม)
-  - `GATEWAY_NO_RESPONSE` (device ไม่ตอบ)
-  - `SLAVE_DEVICE_FAILURE` (device ตอบแต่ error)
-  - `ILLEGAL_ADDRESS` / `ILLEGAL_VALUE` (address/value ผิด)
-- SCADA ต้องการ error code ที่แม่นยำเพื่อแสดง alarm ที่ถูกต้อง
+### 4.6 [LOW] Config Validation ไม่มี
 
-### 6.4 [MEDIUM] ขาดการรองรับ Function Code อื่น
+```python
+def load_config(config_path=None) -> dict:
+    # ... merge defaults + YAML + env vars ...
+    return cfg  # ← ไม่ validate ค่าใดๆ
+```
 
-- รองรับเฉพาะ FC 1-6, 15-16
-- ไม่รองรับ FC 23 (Read/Write Multiple Registers) ซึ่งใช้บ่อยในอุตสาหกรรม
-- ไม่รองรับ FC 43 (Read Device Identification)
-- ไม่รองรับ Custom Function Codes ที่ vendor อาจกำหนด
+**ปัญหา:**
+- ไม่ validate ค่า config หลัง load:
+  - `tcp_port` อาจเป็น string หรือจำนวนลบ
+  - `baudrate: 0` จะทำให้ `_inter_frame_delay()` → `ZeroDivisionError`
+  - `queue.maxsize: -1` → undefined behavior
+  - `serial.timeout: 0` → serial read ไม่เคย timeout
+- Environment variable converter อาจ throw (เช่น `LGS_TCP_PORT=abc` → `ValueError`)
 
-### 6.5 [LOW] Coil Value Normalization ไม่สม่ำเสมอ
-
-- บางที่ normalize เป็น `int (0/1)` บางที่ใช้ `bool`
-- `write_coil` ของ pymodbus คาดหวัง `True/False` หรือ `0xFF00/0x0000`
-- การ normalize ที่ไม่ตรงกันอาจทำให้ write ไม่สำเร็จกับบาง device
+**แนวทางแก้ไข:**
+- เพิ่ม config validation function หลัง `load_config()` ก่อน `run_gateway()`
+- validate type, range, consistency (เช่น `server_timeout > serial.timeout`)
+- ใช้ pydantic / dataclass validation หรือ custom validators
 
 ---
 
-## 7. ปัญหาด้านคุณภาพโค้ด
+## 5. ช่องโหว่ที่ยังคงมีอยู่ — ด้าน Concurrency & Race Conditions
 
-### 7.1 Dead Code
-
-| โค้ด | ตำแหน่ง | ปัญหา |
-|---|---|---|
-| `self._read_cache = {}` | `SerialManager.__init__` | ไม่เคยถูกอ่านหรือเขียนค่า |
-| `self.complete_ts` | `RtuRequest.__init__` | ไม่เคยถูกเขียนค่า |
-| `def start(self)` | `SerialManager` | ไม่เคยถูกเรียก (ใช้ `serial_runner()` แทน) |
-| `GatewayBlock` | class | ไม่มี logic — ใช้ `ModbusSparseDataBlock` ตรงๆ ได้ |
-| sync `getValues`/`setValues` | `GatewayContext` | อาจเป็น dead path ถ้า pymodbus ใช้ async version เสมอ |
-
-### 7.2 ความซ้ำซ้อนของโค้ด (DRY Violations)
-
-- **Coil normalization** (`[1 if v else 0 for v in ...]`) ถูกเขียนซ้ำ > 15 จุด
-- **Broadcast exception handling** (`isinstance(e, ModbusIOException) and req.unit_id == 0`) ซ้ำในทุก write FC
-- **sync/async bridge** (`run_coroutine_threadsafe` + `result(timeout)`) ซ้ำใน `getValues`, `setValues`, `async_getValues`, `async_setValues`
-- **Value extraction** (`values[0] if len(values) == 1 else values`) ซ้ำหลายจุด
-
-### 7.3 ไม่มี Type Hints ที่สมบูรณ์
-
-- Import `Tuple, Optional, Any, Union` แต่ใช้จริงแค่ `Optional`
-- ฟังก์ชันหลักไม่มี return type annotation
-- ยากต่อการทำ static analysis ด้วย mypy
-
-### 7.4 Configuration เป็น Hardcoded Constants
+### 5.1 [HIGH] Sync `getValues`/`setValues` ยัง Block Thread
 
 ```python
-TCP_HOST = "0.0.0.0"
-TCP_PORT = 502
-SERIAL_CONFIG = { "port": "/dev/ttyUSB0", ... }
-CACHE_TTL = 0.2
-SERVER_TIMEOUT = 2.0
+def _sync_submit(self, req):
+    cf = asyncio.run_coroutine_threadsafe(
+        self._mgr.submit(req), self._loop)
+    return cf.result(timeout=self._timeout)  # ← blocking!
 ```
 
-- ไม่มีการอ่านจาก config file, environment variable, หรือ command-line argument
-- ทุกครั้งที่ต้องเปลี่ยน config ต้องแก้ source code → เสี่ยงต่อ human error
-- ไม่สามารถ deploy ได้หลาย environment โดยไม่แก้โค้ด
+**ปัญหา:**
+- Sync path ยังคง **block calling thread** ด้วย `cf.result(timeout)`
+- หาก pymodbus ใช้ sync code-path (ซึ่ง pymodbus 3.12.1 async server ใช้ async path เป็นหลัก) → block event loop
+- ปัจจุบัน pymodbus async server เรียก `async_getValues`/`async_setValues` ก่อน → **sync path เป็น fallback ที่แทบไม่ถูกเรียก**
+- แต่ถ้า pymodbus version ในอนาคตเปลี่ยน internal behavior → อาจกลายเป็น deadlock
 
-### 7.5 ไม่มี Unit Test / Integration Test
+**ระดับความเสี่ยงจริง:** ต่ำกว่าที่ดูเหมือน เพราะ async path ถูกใช้เป็นหลัก แต่ sync path ยังคงเป็น **time bomb** ถ้า runtime behavior เปลี่ยน
 
-- ไม่มีไฟล์ test ในโปรเจค
-- Module-level side effects ทำให้ mock ได้ยาก
-- ไม่สามารถ verify behavior ของ deduplication, reconnection, error handling ฯลฯ ได้อัตโนมัติ
+**แนวทางแก้ไข:**
+- Log warning เมื่อ sync path ถูกเรียก (detect unexpected usage)
+- ย้าย sync blocking call ไปรันใน `ThreadPoolExecutor` แทน block โดยตรง
+- Document ว่า sync path เป็น fallback only
 
----
-
-## 8. ปัญหาด้านประสิทธิภาพ
-
-### 8.1 [HIGH] สร้าง 248 Context ตั้งแต่เริ่ม
+### 5.2 [MEDIUM] `_req_counter` Global Variable ไม่มี Thread-Safe
 
 ```python
-slaves = {
-    i: GatewayContext(unit_id=i) for i in range(0, 248)
+_req_counter = 0
+
+class RtuRequest:
+    def __init__(self, ...):
+        global _req_counter
+        _req_counter += 1   # ← not atomic
+        self.rid = _req_counter
+```
+
+**ปัญหา:**
+- `_req_counter += 1` ไม่ใช่ atomic operation ใน Python (read-modify-write)
+- `RtuRequest` ถูกสร้างจากทั้ง Main thread (TCP handler) และอาจจาก serial thread
+- GIL ป้องกัน true race condition ใน CPython แต่ **ไม่ใช่ guarantee** ตาม Python language spec
+- อาจทำให้ request ID ซ้ำกัน (duplicate rid)
+
+**แนวทางแก้ไข:**
+- ใช้ `itertools.count()` (thread-safe in CPython)
+- หรือ `threading.Lock()` รอบ counter increment
+- หรือ `id(req)` แทน sequential counter
+
+### 5.3 [MEDIUM] `serial_mgr.metrics` ถูกเขียนจากหลาย Thread
+
+```python
+self.metrics: Dict[str, Any] = {
+    "requests_total": 0,    # ← เขียนจาก serial thread
+    "queue_depth": 0,       # ← เขียนจาก serial thread
+    ...
 }
 ```
 
-- ส่วนใหญ่มี device เพียง 5-20 ตัวบน bus แต่สร้าง 248 objects
-- แต่ละ `GatewayContext` สร้าง 4 `GatewayBlock` (ซึ่งคือ `ModbusSparseDataBlock` ที่มี dict `{0:0}`)
-- รวม 248 × 4 = **992 objects** จาก library ที่ไม่จำเป็น
-- ควรใช้ lazy creation หรือ configure เฉพาะ unit ที่มีอยู่จริง
+- `metrics` dict ถูกเขียนจาก serial thread (ใน `submit()`, `worker()`)
+- ถูกอ่านจาก main thread (ใน `_health_server()`, `_watchdog()`)
+- GIL ป้องกัน dict corruption ใน CPython แต่ **ค่าที่อ่านอาจ stale** (ไม่มี memory barrier)
+- Comment ในโค้ดบอก "read cross-thread via GIL safety" — ถูกต้องสำหรับ CPython แต่ไม่ portable
 
-### 8.2 [MEDIUM] `asyncio.sleep(0.01)` ทุก Request
+**แนวทางแก้ไข:**
+- ยอมรับได้สำหรับ CPython-only deployment (document limitation)
+- หรือใช้ `threading.Lock()` สำหรับ metrics snapshot
+- หรือใช้ `multiprocessing.Value` / `collections.Counter` with lock
 
-```python
-finally:
-    await asyncio.sleep(0.01)  # 10ms delay
-```
-
-- ทุก request มี delay 10ms → throughput สูงสุด ~100 req/s (โดยไม่นับเวลา serial I/O)
-- ที่ baudrate 9600 การส่ง 1 request/response ใช้ ~20-50ms อยู่แล้ว
-- delay นี้เหมาะสำหรับ 9600 bps แต่ถ้าเพิ่ม baudrate (เช่น 19200, 115200) จะกลายเป็น bottleneck
-- ควร configurable หรือ adaptive ตาม baudrate
-
-### 8.3 [MEDIUM] Logging ระดับ DEBUG ใน Production
+### 5.4 [LOW] `serial_mgr.queue` อาจเป็น None ช่วง Startup
 
 ```python
-log.setLevel(logging.DEBUG)
+# run_gateway():
+thr.start()
+await asyncio.sleep(0.1)  # ← hope 100ms enough for queue init
 ```
 
-- Root logger ของ gateway ตั้งเป็น DEBUG → log ทุก request/response
-- String formatting ของ log message มี overhead แม้จะไม่ได้ output
-- ใน production ควรตั้งเป็น INFO หรือ WARNING (configurable)
+**ปัญหา:**
+- Queue ถูกสร้างใน serial thread (`_serial_thread()`)
+- Main thread รอ 100ms แล้วสมมติว่า queue พร้อม
+- บนเครื่องที่ช้ามาก (Arduino Uno Q ภายใต้ heavy load) → 100ms อาจไม่พอ
+- ถ้า queue ยังเป็น None → `submit()` raise `RuntimeError("Queue not initialised")`
 
-### 8.4 [LOW] `_clean_write_history()` ทำงานทุก Request
+**แนวทางแก้ไข:**
+- ใช้ `threading.Event()` เพื่อ signal เมื่อ queue พร้อม:
+  ```python
+  queue_ready = threading.Event()
+  # in _serial_thread: queue_ready.set()
+  # in run_gateway: queue_ready.wait(timeout=5.0)
+  ```
+
+---
+
+## 6. ช่องโหว่ที่ยังคงมีอยู่ — ด้านโปรโตคอล Modbus
+
+### 6.1 [MEDIUM] Deduplication (ถ้าเปิด) อาจทำให้ข้อมูลผิดพลาด
+
+```yaml
+deduplication:
+  enabled: false   # ← default OFF (ดี!)
+```
+
+**สถานะ v2.0:**
+- Default OFF — **แก้ไขปัญหาหลักจาก v1.0 แล้ว**
+- แต่หาก user เปิด (`enabled: true`) ยังมีปัญหา:
+  - ไม่มี per-device / per-address configurability
+  - Device อาจ reset ค่าไป แต่ gateway cache ยัง match → skip write
+  - Retry write จาก SCADA (ที่ค่าเหมือนเดิม) จะถูก skip
+
+**แนวทางแก้ไข:**
+- เพิ่ม warning log เมื่อ deduplication skip write
+- เพิ่ม per-unit-id exclude list (สำหรับ critical devices)
+- เพิ่ม `X-Dedupe-Skipped` metric ใน health endpoint
+
+### 6.2 [MEDIUM] ขาดการรองรับ Function Code ครบถ้วน
+
+**รองรับแล้ว:**
+| FC | ฟังก์ชัน | สถานะ |
+|---|---|---|
+| 1 | Read Coils | ✅ |
+| 2 | Read Discrete Inputs | ✅ |
+| 3 | Read Holding Registers | ✅ |
+| 4 | Read Input Registers | ✅ |
+| 5 | Write Single Coil | ✅ |
+| 6 | Write Single Register | ✅ |
+| 15 | Write Multiple Coils | ✅ |
+| 16 | Write Multiple Registers | ✅ |
+
+**ยังไม่รองรับ:**
+| FC | ฟังก์ชัน | ความสำคัญ |
+|---|---|---|
+| 22 | Mask Write Register | 🟡 Medium — ใช้ใน bit-level control |
+| 23 | Read/Write Multiple Registers | 🟡 Medium — ใช้บ่อยในอุตสาหกรรม |
+| 43 | Read Device Identification | 🟢 Low — diagnostic |
+| Custom | Vendor-specific FCs | 🟢 Low — ขึ้นกับ device |
+
+- FC ที่ไม่รองรับจะ return `[]` (empty list) → ไม่ส่ง Modbus exception code กลับ client
+- ตำแหน่ง `_do_io()`:
+  ```python
+  self._log.warning("Unsupported FC %s on %s", fc, req)
+  return []   # ← ควร raise exception ให้ client ได้ IllegalFunction code
+  ```
+
+**แนวทางแก้ไข:**
+- Unsupported FC ควร raise `DeviceError` with `ExcCodes.IllegalFunction`
+- เพิ่ม FC 23 support (read/write multiple registers)
+
+### 6.3 [LOW] `_echo()` สำหรับ Broadcast อาจไม่ตรงกับ Device Behavior
 
 ```python
-async def submit_request(self, req):
-    ...
-    self._clean_write_history()  # ← ทุก request
+@staticmethod
+def _echo(req):
+    if _is_coil_fc(req.func_code):
+        return _norm_coils(req.value)
+    return _norm_regs(req.value)
 ```
 
-- O(N) scan ทุก request → เมื่อ history โตขึ้นจะช้าลง
-- ควรใช้ periodic cleanup (เช่น ทุก 10 วินาที) หรือ LRU cache ที่มีขนาดจำกัด
+- Broadcast write ส่งคืนค่าที่ **เราส่งไป** ไม่ใช่ค่าที่ **device รับจริง**
+- Device อาจ reject broadcast write (เช่น address ไม่รองรับ) แต่ gateway ส่งคืน success
+- เป็น inherent limitation ของ Modbus broadcast (no response expected)
+- ควร document เป็น known behavior
+
+### 6.4 [LOW] Write-back Cache TTL อาจไม่เพียงพอสำหรับ Slow Devices
+
+```python
+self._wcache_ttl = 2.0  # seconds
+```
+
+- หากมี write request ตามด้วย read (จาก client อื่น) ภายใน 2 วินาที → ได้ cached value ที่อาจ stale
+- Device ที่ใช้เวลา apply > 2s → read จะได้ค่าเก่า
+- ปัจจุบัน cache ถูก `pop()` เมื่อ read → one-shot only (ดี)
+- แต่ค่า 2s ไม่ configurable
+
+**แนวทางแก้ไข:**
+- เพิ่ม `wcache_ttl` ใน config.yaml
+- Document ว่า cache เป็น one-shot (pop on first read)
+
+---
+
+## 7. ปัญหาด้านคุณภาพโค้ด (Code Quality)
+
+### 7.1 [LOW] ไม่มี Unit Test / Integration Test
+
+- ไม่มีไฟล์ test ในโปรเจค
+- โค้ด v2.0 ย้าย side effects ออกจาก module level แล้ว → **สามารถ test ได้** (ดีกว่า v1.0)
+- ฟังก์ชันที่ควรมี test:
+  - `load_config()` — merge priority, env overrides
+  - `_norm_coils()` / `_norm_regs()` — edge cases
+  - `_inter_frame_delay()` — boundary at 19200
+  - `_dedupe_check()` — match/mismatch/expired
+  - `_exc_to_code()` — exception mapping
+  - `_cache_set()` / `_cache_get()` — TTL behavior
+  - `_LazyDevices` — `__contains__`, `__missing__`, `__bool__`
+
+### 7.2 [LOW] Type Hints ไม่ครบถ้วน
+
+- ฟังก์ชันหลักมี return type ที่ดีขึ้น แต่ยังขาดบางจุด:
+  - `_cache_get()` → return type `Optional[list]`
+  - `_exc_to_code()` → return type `int`
+  - `_sync_submit()` → return type `Union[list, int]`
+  - `_async_submit()` → return type `Union[list, int]`
+
+### 7.3 [LOW] Magic Numbers
+
+- `self._wcache_ttl = 2.0` — hardcoded, ไม่อยู่ใน config
+- `timeout=5.0` ใน health server read — hardcoded
+- `timeout=5.0` ใน shutdown `cf.result()` — hardcoded
+- `if len(self._lat_buf) > 100` — buffer size hardcoded
+
+---
+
+## 8. ปัญหาด้านประสิทธิภาพ (Performance)
+
+### 8.1 [MEDIUM] `_lat_buf.pop(0)` คือ O(N)
+
+```python
+if len(self._lat_buf) > 100:
+    self._lat_buf.pop(0)   # ← O(N) list shift
+```
+
+**ปัญหา:**
+- `list.pop(0)` ต้อง shift ทุก element → O(N) ทุกครั้งที่เกิน 100 entries
+- ทุก request ที่มี latency tracking จะ trigger O(N)
+
+**แนวทางแก้ไข:**
+- ใช้ `collections.deque(maxlen=100)` — O(1) pop/append
+- หรือเก็บ running average โดยไม่ต้อง buffer
+
+### 8.2 [LOW] Health Response สร้างใหม่ทุก Request
+
+```python
+body = json.dumps({...}, indent=2)
+resp = f"HTTP/1.1 {code} ..."
+```
+
+- สร้าง JSON body + HTTP response string ทุก health request
+- ในสภาพแวดล้อมปกติ (health check ทุก 30-60s) ไม่มีผลกระทบ
+- แต่ถ้ามี monitoring ที่ poll ถี่มาก → unnecessary allocation
+
+### 8.3 [LOW] `_hist_clean()` Iterates All Keys
+
+```python
+stale = [k for k, (_, ts) in self._write_hist.items()
+         if now - ts > self._hist_ttl]
+```
+
+- Rate-limited to 1x/sec แล้ว (ดี)
+- แต่ยังคง iterate ทุก key → O(N) ต่อ second
+- ในสภาพแวดล้อมจริง N น้อย (จำนวน unique write addresses) → ไม่มีปัญหา
 
 ---
 
 ## 9. ปัญหาด้าน Deployment & Operations
 
-### 9.1 ไม่มี Monitoring / Metrics
+### 9.1 [MEDIUM] Health Endpoint เป็น Raw TCP — ไม่ใช่ HTTP Compliant
 
-- ไม่มี Prometheus metrics endpoint, SNMP, หรือ health API
-- ไม่สามารถ monitor:
-  - จำนวน request/second
-  - Queue depth
-  - Serial latency (average, p99)
-  - Error rate per device
-  - Connection status
-- สิ่งเหล่านี้จำเป็นสำหรับ predictive maintenance ในโรงงาน
+```python
+async def _handle(reader, writer):
+    await asyncio.wait_for(reader.read(4096), timeout=5.0)
+    # ← ไม่ parse HTTP method, path, headers
+```
 
-### 9.2 ไม่มี Log Rotation
+**ปัญหา:**
+- Health server ไม่ parse HTTP request — **ทุก** TCP data ที่ส่งมาจะได้ health response
+- ไม่รองรับ:
+  - Path routing (`/health` vs `/metrics` vs `/ready`)
+  - HTTP methods (GET vs POST)
+  - HTTP/1.1 keep-alive
+  - Content-Type negotiation
+- Load balancer ที่ส่ง health check path เฉพาะอาจ confused
+- Kubernetes `livenessProbe` / `readinessProbe` ต้องการ path-based health check
 
-- `logging.basicConfig()` เขียนลง stdout
-- systemd journal จัดการ rotation ได้ แต่ถ้ารันนอก systemd → log เต็ม disk
-- ไม่มี structured logging (JSON) สำหรับ log aggregation (ELK, Grafana Loki)
+**แนวทางแก้ไข:**
+- Parse request line (`GET /health HTTP/1.1`) เพื่อรองรับ path routing
+- เพิ่ม `/ready` endpoint (readiness vs liveness)
+- หรือใช้ lightweight HTTP library (aiohttp minimal)
 
-### 9.3 Setup Script ไม่สมบูรณ์
+### 9.2 [MEDIUM] ไม่มี Prometheus-Compatible Metrics
 
-- `setup_lgs.sh` ไม่ตรวจสอบว่า venv สร้างสำเร็จหรือไม่
-- ไม่ตั้งค่า serial port permissions
-- ไม่ตรวจสอบว่า `/dev/ttyUSB0` มีอยู่
-- ไม่มี `set -e` → ถ้าคำสั่งใดล้มเหลว สคริปต์รันต่อไป
+- Health endpoint แสดง metrics เป็น JSON ดี แต่ไม่ Prometheus-compatible
+- ไม่มี:
+  - Counter format (`# HELP ...`, `# TYPE ...`)
+  - Histogram (latency distribution)
+  - Labels (per-unit, per-FC)
+- ทำให้ integrate กับ Grafana/Prometheus ได้ยาก
 
-### 9.4 ไม่มี Configuration Management
+**แนวทางแก้ไข:**
+- เพิ่ม `/metrics` endpoint ที่ส่ง Prometheus exposition format
+- หรือใช้ `prometheus_client` library (lightweight)
 
-- ไม่มี config file (YAML/TOML/JSON)
-- ไม่สามารถเปลี่ยน serial port, baudrate, timeout ได้โดยไม่แก้โค้ด
-- Environment variables มี support บางส่วน (แค่ `PYTHONUNBUFFERED=1` ใน service file)
+### 9.3 [LOW] `setup_lgs.sh` ไม่ Handle Upgrade Scenario
+
+- Script ดีสำหรับ fresh install แต่:
+  - ไม่ backup config เดิมก่อน upgrade
+  - ไม่ compare config versions (new defaults อาจหายไป)
+  - ไม่ stop service ก่อน upgrade venv (อาจ crash ระหว่าง pip install)
+
+### 9.4 [LOW] ไม่มี Log Rotation Configuration
+
+- Log ไปที่ `stdout` → systemd journal จัดการได้
+- แต่ไม่มี `journald.conf` recommendation สำหรับ retention:
+  - Default journal size อาจเต็ม disk บน embedded board (Arduino Uno Q มี storage จำกัด)
 
 ---
 
-## 10. แผนการปรับปรุง
+## 10. แผนการปรับปรุง (Improvement Roadmap)
 
-### Phase 1: Critical Fixes (สัปดาห์ที่ 1-2) — ต้องทำก่อน Production
+### Phase 1: Security Hardening (สัปดาห์ที่ 1-2)
 
-| # | งาน | ความเสี่ยงที่แก้ | ความซับซ้อน |
+| # | งาน | ระดับ | ความซับซ้อน |
 |---|---|---|---|
-| 1.1 | **เพิ่ม Graceful Shutdown** — signal handler (SIGTERM/SIGINT), drain queue, close serial, shutdown executor | Reliability | ต่ำ |
-| 1.2 | **แก้ Exception Handling ใน Worker** — แยก connection error (reconnect) vs device error (log & continue) vs fatal error (restart) | Reliability | ปานกลาง |
-| 1.3 | **เพิ่ม Queue Size Limit** — `asyncio.Queue(maxsize=100)` + backpressure response (Gateway Busy) | Security + Reliability | ต่ำ |
-| 1.4 | **ลดขนาด Executor** — `max_workers=2` (เพียงพอสำหรับ connect + I/O) | Resource | ต่ำ |
-| 1.5 | **ลบ Dead Code** — `_read_cache`, `start()`, unused imports | Code Quality | ต่ำ |
-| 1.6 | **Externalize Configuration** — YAML/TOML config file + environment variable override | Operations | ปานกลาง |
-| 1.7 | **ย้าย module-level side effects เข้า `if __name__`** — ทำให้ testable | Code Quality | ปานกลาง |
+| 1.1 | **IP Whitelist / ACL** — configurable allowed client IPs ใน config.yaml | 🔴 Critical | ปานกลาง |
+| 1.2 | **Connection Limiting** — max concurrent TCP connections | 🟠 High | ต่ำ |
+| 1.3 | **Rate Limiting** — per-IP request rate limit (token bucket) | 🟠 High | ปานกลาง |
+| 1.4 | **Health Endpoint Binding** — default bind `127.0.0.1` แทน `0.0.0.0` | 🟠 High | ต่ำ |
+| 1.5 | **Input Validation** — validate address, count, value ranges ตาม Modbus spec | 🟡 Medium | ปานกลาง |
+| 1.6 | **Config Ownership** — config file owned by root, readable by lgs-gateway | 🟡 Medium | ต่ำ |
+| 1.7 | **Config Validation** — type/range check หลัง load_config() | 🟡 Medium | ปานกลาง |
 
-### Phase 2: Security Hardening (สัปดาห์ที่ 3-4)
+### Phase 2: Reliability Improvements (สัปดาห์ที่ 3-4)
 
-| # | งาน | ความเสี่ยงที่แก้ | ความซับซ้อน |
+| # | งาน | ระดับ | ความซับซ้อน |
 |---|---|---|---|
-| 2.1 | **IP Whitelist / ACL** — configurable list of allowed client IPs | Security | ปานกลาง |
-| 2.2 | **ลด privileges** — ไม่รัน root, ใช้ `setcap` หรือ `authbind`, สร้าง dedicated user | Security | ต่ำ |
-| 2.3 | **Rate Limiting** — จำกัด request/sec per client IP | Security | ปานกลาง |
-| 2.4 | **Input Validation** — validate address range (0-65535), count (1-125 สำหรับ registers, 1-2000 สำหรับ coils), value range (0-65535) | Security + Protocol | ปานกลาง |
-| 2.5 | **Unit ID Access Control** — configure allowed unit IDs per client | Security | ปานกลาง |
-| 2.6 | **Connection Limit** — จำกัด max concurrent TCP connections | Security | ต่ำ |
+| 2.1 | **Watchdog Self-Heal** — restart worker loop หรือ exit process เมื่อ worker dead | 🟠 High | ปานกลาง |
+| 2.2 | **Systemd Watchdog Integration** — `WatchdogSec=` + `sd_notify` | 🟠 High | ปานกลาง |
+| 2.3 | **Queue Ready Signal** — ใช้ `threading.Event` แทน `sleep(0.1)` | 🟡 Medium | ต่ำ |
+| 2.4 | **Broadcast Error Tracking** — log + metrics สำหรับ broadcast failures | 🟡 Medium | ต่ำ |
+| 2.5 | **Sync Path Warning** — log เมื่อ sync getValues/setValues ถูกเรียก unexpectedly | 🟡 Medium | ต่ำ |
+| 2.6 | **Illegal FC Handling** — return proper exception code สำหรับ unsupported FC | 🟡 Medium | ต่ำ |
 
-### Phase 3: Reliability & Observability (สัปดาห์ที่ 5-6)
+### Phase 3: Observability & Operations (สัปดาห์ที่ 5-6)
 
-| # | งาน | ความเสี่ยงที่แก้ | ความซับซ้อน |
+| # | งาน | ระดับ | ความซับซ้อน |
 |---|---|---|---|
-| 3.1 | **Watchdog Task** — periodic check ว่า worker loop ยังทำงาน, serial connected, queue ไม่ overflow | Reliability | ปานกลาง |
-| 3.2 | **Health Check Endpoint** — HTTP `/health` แสดง status, uptime, queue depth, serial status | Operations | ปานกลาง |
-| 3.3 | **Metrics Export** — Prometheus-compatible metrics (request count, latency histogram, error count) | Operations | ปานกลาง |
-| 3.4 | **Structured Logging** — JSON format + configurable log level + log rotation | Operations | ต่ำ |
-| 3.5 | **Exponential Backoff** สำหรับ serial reconnect — เริ่ม 0.5s, สูงสุด 30s, reset เมื่อ connect สำเร็จ | Reliability | ต่ำ |
-| 3.6 | **Serial Port Monitoring** — ตรวจสอบ `/dev/ttyUSB*` existence ก่อน connect, udev event integration | Reliability | ปานกลาง |
-| 3.7 | **Request Timeout Cancellation** — เมื่อ client timeout, ยกเลิก request ที่ค้างใน queue ไม่ให้ execute | Reliability | สูง |
+| 3.1 | **Health HTTP Compliance** — parse request path, support /health + /ready | 🟡 Medium | ปานกลาง |
+| 3.2 | **Prometheus Metrics** — `/metrics` endpoint, latency histogram, per-unit counters | 🟡 Medium | ปานกลาง |
+| 3.3 | **Configurable wcache TTL** — เพิ่มใน config.yaml | 🟢 Low | ต่ำ |
+| 3.4 | **Deque for Latency Buffer** — `collections.deque(maxlen=100)` | 🟢 Low | ต่ำ |
+| 3.5 | **Journal Rotation Guidance** — document recommended `journald.conf` settings | 🟢 Low | ต่ำ |
 
-### Phase 4: Protocol & Performance (สัปดาห์ที่ 7-8)
+### Phase 4: Protocol & Future (สัปดาห์ที่ 7+)
 
-| # | งาน | ความเสี่ยงที่แก้ | ความซับซ้อน |
+| # | งาน | ระดับ | ความซับซ้อน |
 |---|---|---|---|
-| 4.1 | **ปรับปรุง Write Deduplication** — ทำเป็น opt-in, configurable per address, เพิ่ม TTL | Protocol | ปานกลาง |
-| 4.2 | **แก้ Read-After-Write** — cache last written value, return cached ใน getValues แทน serial read ซ้ำ | Protocol + Performance | ปานกลาง |
-| 4.3 | **แก้ FC Mapping** — map FC 6/16 ใน getValues ด้วย (ป้องกัน double-write) | Protocol | ต่ำ |
-| 4.4 | **Proper Modbus Exception Codes** — differentiate GATEWAY_PATH_UNAVAILABLE vs GATEWAY_NO_RESPONSE vs SLAVE_FAILURE | Protocol | ปานกลาง |
-| 4.5 | **Lazy Context Creation** — สร้าง GatewayContext เฉพาะ unit ที่มีการ request เท่านั้น | Performance | ต่ำ |
-| 4.6 | **Adaptive Bus Delay** — คำนวณ inter-frame delay จาก baudrate แทน hardcoded 10ms | Performance | ต่ำ |
-| 4.7 | **เพิ่ม FC 23, 43 Support** — Read/Write Multiple Registers, Read Device ID | Protocol | ปานกลาง |
-
-### Phase 5: Testing & Long-term (สัปดาห์ที่ 9+)
-
-| # | งาน | ความเสี่ยงที่แก้ | ความซับซ้อน |
-|---|---|---|---|
-| 5.1 | **Unit Tests** — test deduplication, coil normalization, error handling, timeout | Code Quality | สูง |
-| 5.2 | **Integration Tests** — pymodbus simulator as RTU slave | Code Quality | สูง |
-| 5.3 | **Load Tests** — concurrent TCP clients, queue saturation, serial latency under load | Performance | สูง |
-| 5.4 | **TLS Support** — Modbus/TCP Security extension หรือ stunnel wrapper | Security | สูง |
-| 5.5 | **Multi-Serial Support** — รองรับหลาย serial port (หลาย RS485 bus) | Feature | สูง |
-| 5.6 | **Configuration Hot-Reload** — เปลี่ยน config โดยไม่ต้อง restart | Operations | สูง |
-| 5.7 | **Web Dashboard** — แสดง real-time status, device map, traffic visualization | Operations | สูง |
+| 4.1 | **FC 23 Support** — Read/Write Multiple Registers | 🟡 Medium | ปานกลาง |
+| 4.2 | **TLS Support** — Modbus/TCP Security extension | 🟡 Medium | สูง |
+| 4.3 | **Unit Tests** — test all helper functions + deduplication + cache + config | 🟢 Low | สูง |
+| 4.4 | **Integration Tests** — pymodbus simulator as RTU slave | 🟢 Low | สูง |
+| 4.5 | **Thread-Safe Request Counter** — `itertools.count()` หรือ Lock | 🟡 Medium | ต่ำ |
+| 4.6 | **Multi-Serial Support** — หลาย RS485 bus | Feature | สูง |
+| 4.7 | **Web Dashboard** — real-time status visualization | Feature | สูง |
 
 ---
 
 ## 11. สรุปตารางความเสี่ยง
 
-| ลำดับ | ช่องโหว่ | ระดับ | ส่วนที่เกี่ยวข้อง | ผลกระทบ |
+### ช่องโหว่ที่ยังคงมีอยู่ใน v2.0
+
+| # | ช่องโหว่ | ระดับ | หมวด | ผลกระทบ |
 |---|---|---|---|---|
-| 1 | ไม่มี Authentication | 🔴 Critical | TCP Server | ผู้โจมตีควบคุมอุปกรณ์ได้ |
-| 2 | ไม่มี Graceful Shutdown | 🔴 Critical | Main / Worker | Serial port lock, data loss |
-| 3 | ไม่มี Watchdog | 🔴 Critical | Worker Loop | Silent failure, queue overflow |
-| 4 | Write Deduplication อาจทำข้อมูลหาย | 🔴 Critical | SerialManager | False ACK ในสภาพแวดล้อมจริง |
-| 5 | Exception ทำ disconnect ทั้ง bus | 🟠 High | Worker Loop | ทุกอุปกรณ์ offline ชั่วคราว |
-| 6 | Read-After-Write ส่ง read ซ้ำ | 🟠 High | GatewayContext | Latency เพิ่ม 2x สำหรับ write |
-| 7 | Sync getValues block event loop | 🟠 High | GatewayContext | TCP server ค้าง |
-| 8 | รัน root | 🟠 High | Systemd | Privilege escalation risk |
-| 9 | ไม่มี Rate Limit / Queue Limit | 🟠 High | TCP / Queue | DoS, Memory exhaustion |
-| 10 | Serial reconnect ไม่มี backoff | 🟠 High | SerialManager | CPU spike เมื่อ serial หาย |
-| 11 | FC 6/16 ไม่ map ใน getValues | 🟠 High | GatewayContext | Double-write risk |
-| 12 | SERVER_TIMEOUT สั้นเกินไป | 🟡 Medium | Config | Ghost writes |
-| 13 | ไม่มี Monitoring/Metrics | 🟡 Medium | Operations | Blind operation |
-| 14 | Config เป็น hardcoded | 🟡 Medium | Module-level | Deployment inflexibility |
-| 15 | ไม่มี Input Validation | 🟡 Medium | GatewayContext | Malformed requests to devices |
-| 16 | Modbus ExcCodes ไม่แม่นยำ | 🟡 Medium | GatewayContext | SCADA alarm ไม่ถูกต้อง |
-| 17 | ไม่มี Encryption | 🟡 Medium | TCP Server | Data sniffing |
-| 18 | Dead code | 🟢 Low | หลายจุด | Maintainability |
-| 19 | ไม่มี Tests | 🟢 Low | Project | Regression risk |
-| 20 | Module-level side effects | 🟢 Low | Module-level | Untestable code |
+| 1 | ไม่มี Authentication / Authorization | 🔴 Critical | Security | ผู้โจมตีควบคุมอุปกรณ์ได้ |
+| 2 | ไม่มี Rate / Connection Limiting | 🟠 High | Security | DoS, resource exhaustion |
+| 3 | Health Endpoint ไม่มี Auth + เปิด 0.0.0.0 | 🟠 High | Security | Information disclosure |
+| 4 | Watchdog ไม่สามารถ self-heal | 🟠 High | Reliability | Zombie gateway state |
+| 5 | `_wcache` ไม่มี thread-safety guarantee เชิง document | 🟠 High | Concurrency | Potential race condition ถ้า architecture เปลี่ยน |
+| 6 | Sync getValues/setValues ยัง block thread | 🟠 High | Concurrency | Event loop deadlock (fallback path) |
+| 7 | ไม่มีการเข้ารหัสข้อมูล (Encryption) | 🟡 Medium | Security | Data sniffing |
+| 8 | ไม่มี Input Validation ตาม Modbus spec | 🟡 Medium | Security | Malformed requests to devices |
+| 9 | Config ไม่มี validation | 🟡 Medium | Reliability | Runtime crash จาก bad config |
+| 10 | Broadcast fire-and-forget ไม่ track error | 🟡 Medium | Reliability | Silent failures |
+| 11 | Health HTTP ไม่ compliant (no path routing) | 🟡 Medium | Operations | Integration ยากกับ orchestrators |
+| 12 | ไม่มี Prometheus metrics | 🟡 Medium | Operations | Monitoring ไม่ครบ |
+| 13 | Unsupported FC return `[]` แทน exception code | 🟡 Medium | Protocol | Client ไม่ได้รับ IllegalFunction |
+| 14 | Deduplication (ถ้าเปิด) ไม่ per-device configurable | 🟡 Medium | Protocol | Potential false ACK |
+| 15 | `_req_counter` ไม่ thread-safe | 🟡 Medium | Concurrency | Duplicate request IDs |
+| 16 | `metrics` dict ข้าม thread (GIL-dependent) | 🟡 Medium | Concurrency | ไม่ portable นอก CPython |
+| 17 | Queue ready ใช้ `sleep(0.1)` แทน Event | 🟢 Low | Reliability | Race condition ตอน startup |
+| 18 | Daemon thread → data loss on SIGKILL | 🟢 Low | Reliability | Pending writes สูญหาย |
+| 19 | `_lat_buf.pop(0)` คือ O(N) | 🟢 Low | Performance | Minor CPU waste |
+| 20 | ไม่มี Unit Tests | 🟢 Low | Quality | Regression risk |
+| 21 | Type hints ไม่ครบ | 🟢 Low | Quality | Static analysis ไม่ครบ |
+| 22 | Magic numbers (hardcoded TTL, buffer size) | 🟢 Low | Quality | Maintainability |
+
+### เปรียบเทียบ v1.0 กับ v2.0
+
+| ระดับ | v1.0 | v2.0 | ลดลง |
+|---|---|---|---|
+| 🔴 Critical | 4 | 1 | -75% |
+| 🟠 High | 7 | 5 | -29% |
+| 🟡 Medium | 5 | 10* | +100%** |
+| 🟢 Low | 4 | 6 | +50%** |
+
+\* *จำนวนเพิ่มเพราะ v2.0 มีฟีเจอร์มากขึ้น (health endpoint, watchdog, config system) ซึ่งแต่ละส่วนมีช่องโหว่เล็กน้อยของตัวเอง*  
+\** *ช่องโหว่ระดับ Medium/Low ที่เพิ่มขึ้นมีความรุนแรงน้อยกว่า Critical/High ที่หายไปอย่างมาก*
+
+**สรุปการปรับปรุง:**
+- **ปัญหา Critical ลดลงจาก 4 → 1** (เหลือเฉพาะ Authentication ซึ่งเป็น Modbus protocol limitation)
+- **ปัญหาสถาปัตยกรรมหลักถูกแก้ทั้งหมด:** Graceful shutdown, bounded queue, categorised errors, exponential backoff, lazy context, adaptive delay, structured config
+- **เพิ่มความสามารถใหม่:** Health check, watchdog, JSON logging, YAML config, env-var overrides, systemd hardening
 
 ---
 
 ## ภาคผนวก: Reference Standards
 
-สำหรับการนำ Gateway ไปใช้ในระดับอุตสาหกรรมจริง ควรพิจารณามาตรฐานเหล่านี้:
-
 | มาตรฐาน | เนื้อหาที่เกี่ยวข้อง |
 |---|---|
-| **IEC 62443** | Cybersecurity สำหรับ Industrial Automation — กำหนด zones, conduits, access control |
+| **IEC 62443** | Cybersecurity สำหรับ Industrial Automation — zones, conduits, access control |
 | **IEC 62351** | Security สำหรับ Power Systems Communication — TLS for Modbus/TCP |
-| **Modbus Application Protocol Specification V1.1b3** | ข้อกำหนด Function Codes, Exception Codes, Addressing |
-| **Modbus/TCP Security** (Modbus Organization, 2018) | TLS 1.2+ wrapper สำหรับ Modbus TCP, Role-Based Access Control |
-| **NIST SP 800-82 Rev. 3** | Guide to OT Security — แนวทางปฏิบัติสำหรับ SCADA/ICS security |
+| **Modbus Application Protocol Specification V1.1b3** | Function Codes, Exception Codes, Addressing rules |
+| **Modbus/TCP Security** (Modbus Organization, 2018) | TLS 1.2+ wrapper, Role-Based Access Control |
+| **NIST SP 800-82 Rev. 3** | Guide to OT Security — SCADA/ICS security guidelines |
 
 ---
 
-> **สรุป:** โค้ดปัจจุบันมีสถาปัตยกรรมพื้นฐานที่ดี (แยก serial worker, ใช้ queue, async TCP) แต่ยังขาด **ความปลอดภัย, ความทนทานต่อข้อผิดพลาด, และความสามารถในการ monitor** ที่จำเป็นสำหรับการใช้งานจริงในระดับอุตสาหกรรม ช่องโหว่ที่ร้ายแรงที่สุดคือ **การขาด authentication** (ทำให้ผู้โจมตีควบคุมอุปกรณ์ได้), **write deduplication ที่อาจทำข้อมูลหาย**, และ **ไม่มี graceful shutdown** ซึ่งทั้งหมดควรได้รับการแก้ไขก่อนนำไป deploy ใน production
+## ภาคผนวก: Project File Structure (v2.0)
+
+```
+lgs_gateway/
+├── config.yaml                  # YAML configuration (ใหม่ v2.0)
+├── requirements.txt             # pymodbus==3.12.1, pyserial==3.5, pyyaml>=6.0
+├── setup_lgs.sh                 # Automated deployment (ปรับปรุง v2.0)
+├── CODE_REVIEW.md               # เอกสารนี้
+├── TERMINAL_DICTIONARY.md       # พจนานุกรมคำสั่ง Terminal
+├── README.md
+├── src/
+│   └── modbus_gateway.py        # Main gateway code (1111 lines, v2.0)
+└── systemd/
+    └── lgs_gateway.service      # Systemd unit (hardened v2.0)
+```
+
+---
+
+> **สรุป:** v2.0 เป็นการปรับปรุงครั้งสำคัญจาก v1.0 — แก้ไขปัญหาสถาปัตยกรรมหลักทั้งหมด (graceful shutdown, bounded queue, error categorisation, exponential backoff, config externalization) ช่องโหว่ที่ร้ายแรงที่สุดที่ยังเหลือคือ **การขาด authentication/authorization** ซึ่งเป็นข้อจำกัดของโปรโตคอล Modbus TCP เอง — ควรแก้ไขด้วย network-level security (firewall, VLAN, VPN) ก่อนนำไป deploy ใน production รวมถึงเพิ่ม rate limiting และปิด health endpoint จากภายนอก
